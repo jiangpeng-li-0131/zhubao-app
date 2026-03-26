@@ -1,49 +1,69 @@
 import streamlit as st
-import sqlite3
 import pandas as pd
 from datetime import datetime
+from streamlit_gsheets import GSheetsConnection
 
-# ================= 数据库初始化 =================
-def init_db():
-    conn = sqlite3.connect('zhubao_finance.db')
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS balances
-                 (id INTEGER PRIMARY KEY, account TEXT, balance REAL)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS transactions
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                  date TEXT, account TEXT, type TEXT, amount REAL, description TEXT)''')
-    
-    # 新增两个代持子账本
-    accounts = ['Jacob', 'Amanda', '猪宝成长基金(Jacob代持)', '猪宝成长基金(Amanda代持)']
-    for acc in accounts:
-        c.execute("SELECT * FROM balances WHERE account=?", (acc,))
-        if not c.fetchone():
-            c.execute("INSERT INTO balances (account, balance) VALUES (?, 0)", (acc,))
-    conn.commit()
-    conn.close()
-
-init_db()
-
-# ================= 辅助函数 =================
-def get_balances():
-    conn = sqlite3.connect('zhubao_finance.db')
-    df = pd.read_sql_query("SELECT account, balance FROM balances", conn)
-    conn.close()
-    return df.set_index('account')['balance'].to_dict()
-
-def update_balance(account, amount, type_str, description):
-    conn = sqlite3.connect('zhubao_finance.db')
-    c = conn.cursor()
-    c.execute("UPDATE balances SET balance = balance + ? WHERE account = ?", (amount, account))
-    date_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    c.execute("INSERT INTO transactions (date, account, type, amount, description) VALUES (?, ?, ?, ?, ?)",
-              (date_str, account, type_str, amount, description))
-    conn.commit()
-    conn.close()
-
-# ================= 页面配置与 UI =================
+# ================= 页面配置 =================
 st.set_page_config(page_title="猪宝成长记账本", layout="centered", page_icon="🐷")
 
+# 建立与 Google Sheets 的连接 (云端核心)
+conn = st.connection("gsheets", type=GSheetsConnection)
+
+# ================= 数据库操作 =================
+def load_data():
+    try:
+        df_balances = conn.read(worksheet="balances", ttl=0)
+        df_trans = conn.read(worksheet="transactions", ttl=0)
+    except Exception as e:
+        st.error("无法连接到 Google Sheets。请检查后台配置或稍后再试。")
+        st.stop()
+        
+    # 初始化4个账本 (双轨制核心)
+    accounts = ['Jacob', 'Amanda', '猪宝成长基金(Jacob代持)', '猪宝成长基金(Amanda代持)']
+    if df_balances.empty or not all(acc in df_balances['account'].values for acc in accounts):
+        existing_accs = df_balances['account'].values if not df_balances.empty else []
+        new_rows = []
+        for acc in accounts:
+            if acc not in existing_accs:
+                new_rows.append({"account": acc, "balance": 0.0})
+        if new_rows:
+            df_balances = pd.concat([df_balances, pd.DataFrame(new_rows)], ignore_index=True)
+            conn.update(worksheet="balances", data=df_balances)
+            
+    if df_trans.empty:
+        df_trans = pd.DataFrame(columns=["date", "account", "type", "amount", "description"])
+        conn.update(worksheet="transactions", data=df_trans)
+        
+    return df_balances, df_trans
+
+def update_balance(account, amount, type_str, description):
+    df_balances, df_trans = load_data()
+    
+    # 更新余额
+    idx = df_balances.index[df_balances['account'] == account].tolist()
+    if idx:
+        df_balances.loc[idx[0], 'balance'] += amount
+    else:
+        new_row = pd.DataFrame({"account": [account], "balance": [amount]})
+        df_balances = pd.concat([df_balances, new_row], ignore_index=True)
+        
+    # 记录流水
+    date_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    new_trans = pd.DataFrame([{
+        "date": date_str, "account": account, "type": type_str, 
+        "amount": amount, "description": description
+    }])
+    df_trans = pd.concat([df_trans, new_trans], ignore_index=True)
+    
+    # 写回云端
+    conn.update(worksheet="balances", data=df_balances)
+    conn.update(worksheet="transactions", data=df_trans)
+
+# ================= 全局数据加载 =================
+df_balances, df_transactions = load_data()
+balances = df_balances.set_index('account')['balance'].to_dict()
+
+# ================= 侧边栏与导航 =================
 with st.sidebar:
     st.title("⚙️ 系统设置")
     exchange_rate = st.number_input("设置 SGD 到 RMB 汇率", value=5.35, step=0.01)
@@ -56,8 +76,6 @@ def display_currency(amount):
         return f"¥ {amount * exchange_rate:,.2f}"
     return f"$ {amount:,.2f}"
 
-balances = get_balances()
-
 # ================= 模块 1: 资产看板 =================
 if menu == "📊 资产看板":
     st.title("🐷 猪宝成长基金 & 个人账本")
@@ -67,23 +85,21 @@ if menu == "📊 资产看板":
     col2.metric("Amanda 个人账本", display_currency(balances.get('Amanda', 0)))
     
     st.markdown("### 🍼 家庭共同账户 (猪宝成长基金)")
-    # 计算总基金
     j_zhu = balances.get('猪宝成长基金(Jacob代持)', 0)
     a_zhu = balances.get('猪宝成长基金(Amanda代持)', 0)
     total_zhu = j_zhu + a_zhu
     
     st.metric("总计金额", display_currency(total_zhu))
     
-    # 显示代持明细
     st.caption("🔍 资金分布明细：")
     sub_col1, sub_col2 = st.columns(2)
     sub_col1.info(f"Jacob 银行卡代持:\n\n**{display_currency(j_zhu)}**")
     sub_col2.info(f"Amanda 银行卡代持:\n\n**{display_currency(a_zhu)}**")
 
-# ================= 模块 2: 每月常规审计 (双轨计算逻辑) =================
+# ================= 模块 2: 每月常规审计 =================
 elif menu == "📝 每月常规审计":
     st.title("📝 每月 7 号财务审计")
-    st.info("程序将分别计算你们各自名下银行卡的流水差额，精准扣除各自代持的猪宝基金。")
+    st.info("程序将分别计算各自名下银行卡的流水差额，精准扣除各自代持的猪宝基金。")
     
     audit_month = st.date_input("选择审计月份", value=datetime.today())
     
@@ -91,10 +107,10 @@ elif menu == "📝 每月常规审计":
     col1, col2 = st.columns(2)
     with col1:
         j_income = st.number_input("Jacob 总收入", min_value=0.0, step=100.0)
-        j_to_personal = st.number_input("Jacob 截留至个人账本", min_value=0.0, step=100.0)
+        j_to_personal = st.number_input("Jacob 截留至个人", min_value=0.0, step=100.0)
     with col2:
         a_income = st.number_input("Amanda 总收入", min_value=0.0, step=100.0)
-        a_to_personal = st.number_input("Amanda 截留至个人账本", min_value=0.0, step=100.0)
+        a_to_personal = st.number_input("Amanda 截留至个人", min_value=0.0, step=100.0)
         
     st.subheader("2. 🏦 银行对账单明细录入")
     if "bank_statements" not in st.session_state:
@@ -113,7 +129,7 @@ elif menu == "📝 每月常规审计":
         }
     )
     
-    st.subheader("3. ⚖️ 个人特殊支出剔除 (账单微调)")
+    st.subheader("3. ⚖️ 个人特殊支出剔除")
     if "personal_expenses" not in st.session_state:
         st.session_state.personal_expenses = pd.DataFrame(
             {"支出人": ["Jacob", "Amanda"], "金额": [0.0, 0.0], "事由": ["无", "无"]}
@@ -130,8 +146,6 @@ elif menu == "📝 每月常规审计":
     )
     
     # === 核心双轨逻辑计算区 ===
-    
-    # 1. 计算净存取 (分人)
     j_deposit = edited_banks[edited_banks['所有人'] == 'Jacob']['Deposit_存入'].sum()
     j_withdrawal = edited_banks[edited_banks['所有人'] == 'Jacob']['Withdrawal_支出'].sum()
     j_net_change = j_deposit - j_withdrawal
@@ -140,15 +154,12 @@ elif menu == "📝 每月常规审计":
     a_withdrawal = edited_banks[edited_banks['所有人'] == 'Amanda']['Withdrawal_支出'].sum()
     a_net_change = a_deposit - a_withdrawal
     
-    # 2. 推算各自产生的总开销 (收入 - 净变化)
     j_raw_expense = j_income - j_net_change
     a_raw_expense = a_income - a_net_change
     
-    # 3. 剔除各自的特殊个人开销
     j_special = edited_personal[edited_personal['支出人'] == 'Jacob']['金额'].sum()
     a_special = edited_personal[edited_personal['支出人'] == 'Amanda']['金额'].sum()
     
-    # 4. 得出各自实际消耗的猪宝基金
     j_zhubao_expense = j_raw_expense - j_special
     a_zhubao_expense = a_raw_expense - a_special
     
@@ -158,39 +169,40 @@ elif menu == "📝 每月常规审计":
     col_j, col_a = st.columns(2)
     with col_j:
         st.write("👨🏻 **Jacob 的账户推算**")
-        st.write(f"推算总流水花销: SGD {j_raw_expense:,.2f}")
+        st.write(f"推算流水花销: SGD {j_raw_expense:,.2f}")
         st.write(f"剔除个人开销: SGD {j_special:,.2f}")
-        st.markdown(f"**从 Jacob 代持基金扣除: <br><span style='color:red; font-size:20px;'>SGD {j_zhubao_expense:,.2f}</span>**", unsafe_allow_html=True)
+        st.markdown(f"**从Jacob代持扣除: <br><span style='color:red; font-size:20px;'>SGD {j_zhubao_expense:,.2f}</span>**", unsafe_allow_html=True)
 
     with col_a:
         st.write("👩🏻 **Amanda 的账户推算**")
-        st.write(f"推算总流水花销: SGD {a_raw_expense:,.2f}")
+        st.write(f"推算流水花销: SGD {a_raw_expense:,.2f}")
         st.write(f"剔除个人开销: SGD {a_special:,.2f}")
-        st.markdown(f"**从 Amanda 代持基金扣除: <br><span style='color:red; font-size:20px;'>SGD {a_zhubao_expense:,.2f}</span>**", unsafe_allow_html=True)
+        st.markdown(f"**从Amanda代持扣除: <br><span style='color:red; font-size:20px;'>SGD {a_zhubao_expense:,.2f}</span>**", unsafe_allow_html=True)
     
-    if st.button("✅ 确认数据无误，提交本月审计"):
-        # 分离记录各自的银行流水明细作为依据
-        j_details = [f"{row['银行名称']}(D:{row['Deposit_存入']},W:{row['Withdrawal_支出']})" for _, row in edited_banks.iterrows() if row['所有人'] == 'Jacob' and str(row['银行名称']).strip()]
-        a_details = [f"{row['银行名称']}(D:{row['Deposit_存入']},W:{row['Withdrawal_支出']})" for _, row in edited_banks.iterrows() if row['所有人'] == 'Amanda' and str(row['银行名称']).strip()]
-        
-        # 1. 个人账本更新 (存入与扣除)
-        if j_to_personal > 0: update_balance('Jacob', j_to_personal, '收入', f'{audit_month.strftime("%Y-%m")} 薪资存入')
-        if a_to_personal > 0: update_balance('Amanda', a_to_personal, '收入', f'{audit_month.strftime("%Y-%m")} 薪资存入')
-        
-        for _, row in edited_personal.iterrows():
-            if row['金额'] > 0 and str(row['事由']).strip() != "":
-                update_balance(row['支出人'], -row['金额'], '支出', f"{audit_month.strftime('%Y-%m')} 个人开销: {row['事由']}")
-        
-        # 2. 猪宝基金更新 (按代持人分别存入与扣除)
-        j_to_zhubao = j_income - j_to_personal
-        a_to_zhubao = a_income - a_to_personal
-        
-        if j_to_zhubao > 0: update_balance('猪宝成长基金(Jacob代持)', j_to_zhubao, '收入', f'{audit_month.strftime("%Y-%m")} 薪资划入')
-        if a_to_zhubao > 0: update_balance('猪宝成长基金(Amanda代持)', a_to_zhubao, '收入', f'{audit_month.strftime("%Y-%m")} 薪资划入')
-        
-        if j_zhubao_expense != 0: update_balance('猪宝成长基金(Jacob代持)', -j_zhubao_expense, '支出', f"{audit_month.strftime('%Y-%m')}日常开销 [{'|'.join(j_details)}]")
-        if a_zhubao_expense != 0: update_balance('猪宝成长基金(Amanda代持)', -a_zhubao_expense, '支出', f"{audit_month.strftime('%Y-%m')}日常开销 [{'|'.join(a_details)}]")
-        
+    if st.button("✅ 确认数据无误，同步至云端"):
+        with st.spinner('正在同步至 Google Sheets，请稍候...'):
+            j_details = [f"{row['银行名称']}(D:{row['Deposit_存入']},W:{row['Withdrawal_支出']})" for _, row in edited_banks.iterrows() if row['所有人'] == 'Jacob' and str(row['银行名称']).strip()]
+            a_details = [f"{row['银行名称']}(D:{row['Deposit_存入']},W:{row['Withdrawal_支出']})" for _, row in edited_banks.iterrows() if row['所有人'] == 'Amanda' and str(row['银行名称']).strip()]
+            
+            if j_to_personal > 0: update_balance('Jacob', j_to_personal, '收入', f'{audit_month.strftime("%Y-%m")} 薪资存入')
+            if a_to_personal > 0: update_balance('Amanda', a_to_personal, '收入', f'{audit_month.strftime("%Y-%m")} 薪资存入')
+            
+            for _, row in edited_personal.iterrows():
+                if row['金额'] > 0 and str(row['事由']).strip() != "":
+                    update_balance(row['支出人'], -row['金额'], '支出', f"{audit_month.strftime('%Y-%m')} 个人开销: {row['事由']}")
+            
+            j_to_zhubao = j_income - j_to_personal
+            a_to_zhubao = a_income - a_to_personal
+            
+            if j_to_zhubao > 0: update_balance('猪宝成长基金(Jacob代持)', j_to_zhubao, '收入', f'{audit_month.strftime("%Y-%m")} 薪资划入')
+            if a_to_zhubao > 0: update_balance('猪宝成长基金(Amanda代持)', a_to_zhubao, '收入', f'{audit_month.strftime("%Y-%m")} 薪资划入')
+            
+            if j_zhubao_expense != 0: update_balance('猪宝成长基金(Jacob代持)', -j_zhubao_expense, '支出', f"{audit_month.strftime('%Y-%m')}日常开销 [{'|'.join(j_details)}]")
+            if a_zhubao_expense != 0: update_balance('猪宝成长基金(Amanda代持)', -a_zhubao_expense, '支出', f"{audit_month.strftime('%Y-%m')}日常开销 [{'|'.join(a_details)}]")
+            
+            st.session_state.pop("bank_statements", None)
+            st.session_state.pop("personal_expenses", None)
+            
         st.success("🎉 本月审计结算完成！双轨账本已同步更新并归档。")
         st.rerun()
 
@@ -208,66 +220,69 @@ elif menu == "🛠️ 强制平账/修正":
         st.warning(f"系统将生成一笔 SGD {diff:,.2f} 的平账记录。")
         confirm = st.checkbox("我已反复核实，确认强制修改当前余额。")
         if confirm and st.button("🚨 确认执行覆盖"):
-            update_balance(acc_to_fix, diff, '系统平账', '人工强制修改余额')
+            with st.spinner('正在同步至云端...'):
+                update_balance(acc_to_fix, diff, '系统平账', '人工强制修改余额')
             st.success("余额已修正！")
             st.rerun()
 
-# ================= 模块 5: 历史流水查询与撤回 =================
+# ================= 模块 5: 历史流水与撤回 =================
 elif menu == "📜 历史流水查询":
     st.title("📜 账本流水与回溯")
-    conn = sqlite3.connect('zhubao_finance.db')
-    df = pd.read_sql_query("SELECT * FROM transactions ORDER BY id DESC", conn)
-    conn.close()
     
-    if not df.empty:
-        # 功能一：修改了筛选逻辑，默认 `default=[]` 不做任何筛选，展示全部
+    if not df_transactions.empty:
+        # 功能一：清空默认筛选，完整展示
         filter_acc = st.multiselect(
             "筛选账本", 
             ["Jacob", "Amanda", "猪宝成长基金(Jacob代持)", "猪宝成长基金(Amanda代持)"], 
             default=[]
         )
         
-        df_display = df.copy()
+        # 按照倒序显示最新流水
+        df_display = df_transactions.iloc[::-1].copy()
         if filter_acc:
             df_display = df_display[df_display['account'].isin(filter_acc)]
             
-        # 展示流水表格
         st.dataframe(df_display, use_container_width=True, hide_index=True)
         
-        # 功能二：新增安全的“撤销/删除记录”功能
+        # 功能二：安全的下拉撤销功能 (Google Sheets 架构)
         st.markdown("---")
         st.subheader("🗑️ 撤销流水记录")
-        st.warning("⚠️ 删除流水后，系统会自动将该笔金额从对应账本的余额中「反向核算」回去，保证账目绝对平衡。")
+        st.warning("⚠️ 删除流水后，系统会自动将该笔金额从云端的对应账本中「反向核算」回去，保证账目绝对平衡。")
         
-        # 使用下拉菜单，展示详细信息防止误删
-        del_id = st.selectbox(
+        # 为了唯一识别云端行，我们引入原 DataFrame 的内部索引(index)
+        df_trans_with_idx = df_transactions.reset_index()
+        df_trans_with_idx_reverse = df_trans_with_idx.iloc[::-1] # 保持下拉菜单也是倒序排列
+        
+        def format_record(idx):
+            row = df_trans_with_idx[df_trans_with_idx['index'] == idx].iloc[0]
+            return f"{row['date']} | {row['account']} | 金额: {row['amount']} | 事由: {row['description']}"
+            
+        del_idx = st.selectbox(
             "请选择要彻底撤回的流水记录：", 
-            options=df_display['id'].tolist(), 
-            format_func=lambda x: f"ID:{x} | {df[df['id']==x]['date'].values[0]} | {df[df['id']==x]['account'].values[0]} | 金额:{df[df['id']==x]['amount'].values[0]} | 事由:{df[df['id']==x]['description'].values[0]}"
+            options=df_trans_with_idx_reverse['index'].tolist(),
+            format_func=format_record
         )
         
         if st.button("🚨 确认删除并回算余额"):
-            # 连接数据库执行安全删除和反向平账
-            conn = sqlite3.connect('zhubao_finance.db')
-            c = conn.cursor()
-            
-            # 1. 查出这笔流水的详细金额和所属账本
-            c.execute("SELECT account, amount FROM transactions WHERE id=?", (del_id,))
-            res = c.fetchone()
-            
-            if res:
-                acc, amt = res
-                # 2. 从 transactions 表中彻底物理删除该流水
-                c.execute("DELETE FROM transactions WHERE id=?", (del_id,))
+            with st.spinner('正在云端执行撤回并反向核算余额，请稍候...'):
+                row_to_delete = df_trans_with_idx[df_trans_with_idx['index'] == del_idx].iloc[0]
+                acc = row_to_delete['account']
+                amt = float(row_to_delete['amount'])
                 
-                # 3. 从 balances 表中反向减去该金额 (正变负，负变正)
-                c.execute("UPDATE balances SET balance = balance - ? WHERE account = ?", (amt, acc))
-                conn.commit()
+                # 1. 剔除选中的这行，准备写回新的流水表
+                df_trans_new = df_trans_with_idx[df_trans_with_idx['index'] != del_idx].drop(columns=['index'])
                 
-                st.success(f"✅ 成功撤回！已删除该记录，并将 SGD {amt} 从 {acc} 的账本余额中反向调平。")
-            
-            conn.close()
-            # 刷新页面以显示最新数据
+                # 2. 从余额表中执行反向加减法
+                df_balances_new = df_balances.copy()
+                b_idx = df_balances_new.index[df_balances_new['account'] == acc].tolist()
+                if b_idx:
+                    df_balances_new.loc[b_idx[0], 'balance'] -= amt
+                
+                # 3. 双重更新覆盖云端数据
+                conn.update(worksheet="transactions", data=df_trans_new)
+                conn.update(worksheet="balances", data=df_balances_new)
+                
+            st.success(f"✅ 成功撤回！已删除该记录，并将 SGD {amt} 从 {acc} 的云端账本中反向调平。")
             st.rerun()
             
     else:
