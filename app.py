@@ -212,7 +212,7 @@ elif menu == "🛠️ 强制平账/修正":
             st.success("余额已修正！")
             st.rerun()
 
-# ================= 模块 5: 历史流水 =================
+# ================= 模块 5: 历史流水查询与撤回 =================
 elif menu == "📜 历史流水查询":
     st.title("📜 账本流水与回溯")
     conn = sqlite3.connect('zhubao_finance.db')
@@ -220,9 +220,55 @@ elif menu == "📜 历史流水查询":
     conn.close()
     
     if not df.empty:
-        filter_acc = st.multiselect("筛选账本", ["Jacob", "Amanda", "猪宝成长基金(Jacob代持)", "猪宝成长基金(Amanda代持)"], default=["猪宝成长基金(Jacob代持)", "猪宝成长基金(Amanda代持)"])
+        # 功能一：修改了筛选逻辑，默认 `default=[]` 不做任何筛选，展示全部
+        filter_acc = st.multiselect(
+            "筛选账本", 
+            ["Jacob", "Amanda", "猪宝成长基金(Jacob代持)", "猪宝成长基金(Amanda代持)"], 
+            default=[]
+        )
+        
+        df_display = df.copy()
         if filter_acc:
-            df = df[df['account'].isin(filter_acc)]
-        st.dataframe(df, use_container_width=True, hide_index=True)
+            df_display = df_display[df_display['account'].isin(filter_acc)]
+            
+        # 展示流水表格
+        st.dataframe(df_display, use_container_width=True, hide_index=True)
+        
+        # 功能二：新增安全的“撤销/删除记录”功能
+        st.markdown("---")
+        st.subheader("🗑️ 撤销流水记录")
+        st.warning("⚠️ 删除流水后，系统会自动将该笔金额从对应账本的余额中「反向核算」回去，保证账目绝对平衡。")
+        
+        # 使用下拉菜单，展示详细信息防止误删
+        del_id = st.selectbox(
+            "请选择要彻底撤回的流水记录：", 
+            options=df_display['id'].tolist(), 
+            format_func=lambda x: f"ID:{x} | {df[df['id']==x]['date'].values[0]} | {df[df['id']==x]['account'].values[0]} | 金额:{df[df['id']==x]['amount'].values[0]} | 事由:{df[df['id']==x]['description'].values[0]}"
+        )
+        
+        if st.button("🚨 确认删除并回算余额"):
+            # 连接数据库执行安全删除和反向平账
+            conn = sqlite3.connect('zhubao_finance.db')
+            c = conn.cursor()
+            
+            # 1. 查出这笔流水的详细金额和所属账本
+            c.execute("SELECT account, amount FROM transactions WHERE id=?", (del_id,))
+            res = c.fetchone()
+            
+            if res:
+                acc, amt = res
+                # 2. 从 transactions 表中彻底物理删除该流水
+                c.execute("DELETE FROM transactions WHERE id=?", (del_id,))
+                
+                # 3. 从 balances 表中反向减去该金额 (正变负，负变正)
+                c.execute("UPDATE balances SET balance = balance - ? WHERE account = ?", (amt, acc))
+                conn.commit()
+                
+                st.success(f"✅ 成功撤回！已删除该记录，并将 SGD {amt} 从 {acc} 的账本余额中反向调平。")
+            
+            conn.close()
+            # 刷新页面以显示最新数据
+            st.rerun()
+            
     else:
         st.write("暂无流水记录。")
