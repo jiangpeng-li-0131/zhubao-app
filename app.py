@@ -212,17 +212,54 @@ elif menu == "🛠️ 强制平账/修正":
             st.success("余额已修正！")
             st.rerun()
 
-# ================= 模块 5: 历史流水 =================
+# ================= 模块 5: 历史流水与修改 =================
 elif menu == "📜 历史流水查询":
-    st.title("📜 账本流水与回溯")
-    conn = sqlite3.connect('zhubao_finance.db')
-    df = pd.read_sql_query("SELECT * FROM transactions ORDER BY id DESC", conn)
-    conn.close()
+    st.title("📜 流水查询与记录修改")
+    st.info("💡 提示：你可以直接在下方表格中像用 Excel 一样修改数字或事由。如果要删除某行，选中该行最左侧的复选框，按键盘 Delete 键（或点击右上角垃圾桶）即可。")
     
-    if not df.empty:
-        filter_acc = st.multiselect("筛选账本", ["Jacob", "Amanda", "猪宝成长基金(Jacob代持)", "猪宝成长基金(Amanda代持)"], default=["猪宝成长基金(Jacob代持)", "猪宝成长基金(Amanda代持)"])
-        if filter_acc:
-            df = df[df['account'].isin(filter_acc)]
-        st.dataframe(df, use_container_width=True, hide_index=True)
+    if not df_transactions.empty:
+        # 按照倒序显示，最新的在最上面，方便查找
+        df_display = df_transactions.iloc[::-1].reset_index(drop=True)
+        
+        # 渲染可编辑的数据表格
+        edited_trans = st.data_editor(
+            df_display,
+            num_rows="dynamic", # 允许用户动态删除或添加行
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "date": st.column_config.TextColumn("日期 (Date)", disabled=True), # 日期锁定防乱
+                "account": st.column_config.SelectboxColumn("账本 (Account)", options=["Jacob", "Amanda", "猪宝成长基金(Jacob代持)", "猪宝成长基金(Amanda代持)"], required=True),
+                "type": st.column_config.TextColumn("类型 (Type)"),
+                "amount": st.column_config.NumberColumn("金额变化 (Amount)", format="%.2f"),
+                "description": st.column_config.TextColumn("事由明细 (Description)")
+            }
+        )
+        
+        st.markdown("---")
+        if st.button("💾 保存修改并自动核算余额", type="primary"):
+            with st.spinner('正在同步修改并重新核对大盘余额，请稍候...'):
+                # 1. 把倒序的表格再翻转回正序，准备写回数据库
+                final_trans_to_save = edited_trans.iloc[::-1].reset_index(drop=True)
+                
+                # 覆盖更新流水表
+                conn.update(worksheet="transactions", data=final_trans_to_save)
+                
+                # 2. 根据最新的流水表，重新从零核算四个账本的绝对余额
+                accounts = ['Jacob', 'Amanda', '猪宝成长基金(Jacob代持)', '猪宝成长基金(Amanda代持)']
+                new_balances_data = []
+                for acc in accounts:
+                    # 将该账户所有流水的 amount 加总，就是最准确的当前余额
+                    acc_sum = final_trans_to_save[final_trans_to_save['account'] == acc]['amount'].sum()
+                    new_balances_data.append({"account": acc, "balance": float(acc_sum)})
+                
+                df_new_balances = pd.DataFrame(new_balances_data)
+                
+                # 3. 覆盖更新余额表
+                conn.update(worksheet="balances", data=df_new_balances)
+                
+            st.success("✅ 修改已永久保存！所有账本余额已根据最新流水自动重新核准。")
+            st.rerun()
+            
     else:
         st.write("暂无流水记录。")
