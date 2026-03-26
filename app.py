@@ -223,49 +223,17 @@ elif menu == "🛠️ 强制平账/修正":
             st.success("余额已修正！")
             st.rerun()
 
-# ================= 模块 5: 时光机 (流水修改) =================
-elif menu == "📜 历史流水修改":
-    st.title("📜 流水查询与记录修改")
-    st.info("💡 提示：直接在下方表格中修改数字或事由。若要删除某行，勾选最左侧方框后按 Delete 键即可。")
+# ================= 模块 5: 历史流水 =================
+elif menu == "📜 历史流水查询":
+    st.title("📜 账本流水与回溯")
+    conn = sqlite3.connect('zhubao_finance.db')
+    df = pd.read_sql_query("SELECT * FROM transactions ORDER BY id DESC", conn)
+    conn.close()
     
-    if not df_transactions.empty:
-        # 倒序显示，最新在前
-        df_display = df_transactions.iloc[::-1].reset_index(drop=True)
-        
-        edited_trans = st.data_editor(
-            df_display,
-            num_rows="dynamic", 
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "date": st.column_config.TextColumn("日期 (Date)", disabled=True),
-                "account": st.column_config.SelectboxColumn("账本 (Account)", options=["Jacob", "Amanda", "猪宝成长基金(Jacob代持)", "猪宝成长基金(Amanda代持)"], required=True),
-                "type": st.column_config.TextColumn("类型 (Type)"),
-                "amount": st.column_config.NumberColumn("金额变化 (Amount)", format="%.2f"),
-                "description": st.column_config.TextColumn("事由明细 (Description)")
-            }
-        )
-        
-        st.markdown("---")
-        if st.button("💾 保存修改并自动核算余额", type="primary"):
-            with st.spinner('正在将修改同步至 Google Sheets 并重新核对大盘余额...'):
-                # 1. 写回流水表
-                final_trans_to_save = edited_trans.iloc[::-1].reset_index(drop=True)
-                conn.update(worksheet="transactions", data=final_trans_to_save)
-                
-                # 2. 根据最新流水，从零重新计算四个账本余额
-                accounts = ['Jacob', 'Amanda', '猪宝成长基金(Jacob代持)', '猪宝成长基金(Amanda代持)']
-                new_balances_data = []
-                for acc in accounts:
-                    acc_sum = final_trans_to_save[final_trans_to_save['account'] == acc]['amount'].sum()
-                    new_balances_data.append({"account": acc, "balance": float(acc_sum)})
-                
-                # 3. 覆盖余额表
-                df_new_balances = pd.DataFrame(new_balances_data)
-                conn.update(worksheet="balances", data=df_new_balances)
-                
-            st.success("✅ 修改已永久保存！所有账本余额已根据最新流水自动重新核准。")
-            st.rerun()
-            
+    if not df.empty:
+        filter_acc = st.multiselect("筛选账本", ["Jacob", "Amanda", "猪宝成长基金(Jacob代持)", "猪宝成长基金(Amanda代持)"], default=["猪宝成长基金(Jacob代持)", "猪宝成长基金(Amanda代持)"])
+        if filter_acc:
+            df = df[df['account'].isin(filter_acc)]
+        st.dataframe(df, use_container_width=True, hide_index=True)
     else:
         st.write("暂无流水记录。")
