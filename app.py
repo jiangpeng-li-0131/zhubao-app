@@ -13,7 +13,8 @@ def init_db():
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                   date TEXT, account TEXT, type TEXT, amount REAL, description TEXT)''')
     
-    accounts = ['Jacob', 'Amanda', '猪宝成长基金']
+    # 新增两个代持子账本
+    accounts = ['Jacob', 'Amanda', '猪宝成长基金(Jacob代持)', '猪宝成长基金(Amanda代持)']
     for acc in accounts:
         c.execute("SELECT * FROM balances WHERE account=?", (acc,))
         if not c.fetchone():
@@ -48,7 +49,6 @@ with st.sidebar:
     exchange_rate = st.number_input("设置 SGD 到 RMB 汇率", value=5.35, step=0.01)
     view_mode = st.radio("显示货币", ["SGD (新加坡元)", "RMB (人民币)"])
     st.markdown("---")
-    # 删除了独立的个人特殊支出页面
     menu = st.radio("导航", ["📊 资产看板", "📝 每月常规审计", "🛠️ 强制平账/修正", "📜 历史流水查询"])
 
 def display_currency(amount):
@@ -62,17 +62,28 @@ balances = get_balances()
 if menu == "📊 资产看板":
     st.title("🐷 猪宝成长基金 & 个人账本")
     
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Jacob 个人账本", display_currency(balances['Jacob']))
-    col2.metric("Amanda 个人账本", display_currency(balances['Amanda']))
+    col1, col2 = st.columns(2)
+    col1.metric("Jacob 个人账本", display_currency(balances.get('Jacob', 0)))
+    col2.metric("Amanda 个人账本", display_currency(balances.get('Amanda', 0)))
     
-    st.markdown("### 🍼 家庭共同账户")
-    st.metric("猪宝成长基金 (总计)", display_currency(balances['猪宝成长基金']))
+    st.markdown("### 🍼 家庭共同账户 (猪宝成长基金)")
+    # 计算总基金
+    j_zhu = balances.get('猪宝成长基金(Jacob代持)', 0)
+    a_zhu = balances.get('猪宝成长基金(Amanda代持)', 0)
+    total_zhu = j_zhu + a_zhu
+    
+    st.metric("总计金额", display_currency(total_zhu))
+    
+    # 显示代持明细
+    st.caption("🔍 资金分布明细：")
+    sub_col1, sub_col2 = st.columns(2)
+    sub_col1.info(f"Jacob 银行卡代持:\n\n**{display_currency(j_zhu)}**")
+    sub_col2.info(f"Amanda 银行卡代持:\n\n**{display_currency(a_zhu)}**")
 
-# ================= 模块 2: 每月常规审计 =================
+# ================= 模块 2: 每月常规审计 (双轨计算逻辑) =================
 elif menu == "📝 每月常规审计":
     st.title("📝 每月 7 号财务审计")
-    st.info("只需录入当月收入、银行流水及个人特殊开销，程序将全自动推算并结算三个账本。")
+    st.info("程序将分别计算你们各自名下银行卡的流水差额，精准扣除各自代持的猪宝基金。")
     
     audit_month = st.date_input("选择审计月份", value=datetime.today())
     
@@ -103,14 +114,10 @@ elif menu == "📝 每月常规审计":
     )
     
     st.subheader("3. ⚖️ 个人特殊支出剔除 (账单微调)")
-    st.warning("如果本月产生了【仅归属个人】的开销（包含在上方银行 Withdrawal 中），请在此详细记录。程序会从家庭总开销中剔除，并自动从对应的个人账本扣款。")
-    
-    # 个人特殊支出动态表格
     if "personal_expenses" not in st.session_state:
         st.session_state.personal_expenses = pd.DataFrame(
             {"支出人": ["Jacob", "Amanda"], "金额": [0.0, 0.0], "事由": ["无", "无"]}
         )
-    
     edited_personal = st.data_editor(
         st.session_state.personal_expenses,
         num_rows="dynamic",
@@ -122,68 +129,83 @@ elif menu == "📝 每月常规审计":
         }
     )
     
-    # === 核心逻辑计算区 ===
-    total_income = j_income + a_income
-    total_deposit = edited_banks['Deposit_存入'].sum()
-    total_withdrawal = edited_banks['Withdrawal_支出'].sum()
+    # === 核心双轨逻辑计算区 ===
     
-    # 计算个人特殊支出总和
-    jacob_special = edited_personal[edited_personal['支出人'] == 'Jacob']['金额'].sum()
-    amanda_special = edited_personal[edited_personal['支出人'] == 'Amanda']['金额'].sum()
-    total_personal_expense = jacob_special + amanda_special
+    # 1. 计算净存取 (分人)
+    j_deposit = edited_banks[edited_banks['所有人'] == 'Jacob']['Deposit_存入'].sum()
+    j_withdrawal = edited_banks[edited_banks['所有人'] == 'Jacob']['Withdrawal_支出'].sum()
+    j_net_change = j_deposit - j_withdrawal
     
-    # 推算支出
-    net_bank_change = total_deposit - total_withdrawal
-    calculated_raw_expense = total_income - net_bank_change
-    final_zhubao_expense = calculated_raw_expense - total_personal_expense
+    a_deposit = edited_banks[edited_banks['所有人'] == 'Amanda']['Deposit_存入'].sum()
+    a_withdrawal = edited_banks[edited_banks['所有人'] == 'Amanda']['Withdrawal_支出'].sum()
+    a_net_change = a_deposit - a_withdrawal
+    
+    # 2. 推算各自产生的总开销 (收入 - 净变化)
+    j_raw_expense = j_income - j_net_change
+    a_raw_expense = a_income - a_net_change
+    
+    # 3. 剔除各自的特殊个人开销
+    j_special = edited_personal[edited_personal['支出人'] == 'Jacob']['金额'].sum()
+    a_special = edited_personal[edited_personal['支出人'] == 'Amanda']['金额'].sum()
+    
+    # 4. 得出各自实际消耗的猪宝基金
+    j_zhubao_expense = j_raw_expense - j_special
+    a_zhubao_expense = a_raw_expense - a_special
     
     st.markdown("---")
-    st.markdown("### 📊 本月结算预览")
-    st.write(f"- 家庭总账面收入: **SGD {total_income:,.2f}**")
-    st.write(f"- 银行账户总净变化 (存 - 取): **SGD {net_bank_change:,.2f}**")
-    st.write(f"- 程序推算家庭总流水花销: **SGD {calculated_raw_expense:,.2f}**")
-    if total_personal_expense > 0:
-        st.write(f"- 💡 其中包含个人特殊开销: **SGD {total_personal_expense:,.2f}** (将分别从个人账本扣除)")
-        
-    st.markdown(f"**=> 最终将从猪宝成长基金扣除日常开销: <span style='color:red; font-size:24px;'>SGD {final_zhubao_expense:,.2f}</span>**", unsafe_allow_html=True)
+    st.markdown("### 📊 本月结算核对预览")
+    
+    col_j, col_a = st.columns(2)
+    with col_j:
+        st.write("👨🏻 **Jacob 的账户推算**")
+        st.write(f"推算总流水花销: SGD {j_raw_expense:,.2f}")
+        st.write(f"剔除个人开销: SGD {j_special:,.2f}")
+        st.markdown(f"**从 Jacob 代持基金扣除: <br><span style='color:red; font-size:20px;'>SGD {j_zhubao_expense:,.2f}</span>**", unsafe_allow_html=True)
+
+    with col_a:
+        st.write("👩🏻 **Amanda 的账户推算**")
+        st.write(f"推算总流水花销: SGD {a_raw_expense:,.2f}")
+        st.write(f"剔除个人开销: SGD {a_special:,.2f}")
+        st.markdown(f"**从 Amanda 代持基金扣除: <br><span style='color:red; font-size:20px;'>SGD {a_zhubao_expense:,.2f}</span>**", unsafe_allow_html=True)
     
     if st.button("✅ 确认数据无误，提交本月审计"):
-        # 1. 记录银行明细字符串用于历史记录
-        bank_details = []
-        for index, row in edited_banks.iterrows():
-            if pd.notna(row['银行名称']) and str(row['银行名称']).strip() != "":
-                bank_details.append(f"{row['所有人']}-{row['银行名称']}(D:{row['Deposit_存入']}, W:{row['Withdrawal_支出']})")
-        detail_str = " | ".join(bank_details)
-        expense_desc = f"{audit_month.strftime('%Y-%m')}日常开销 [流水依据: {detail_str}]"
+        # 分离记录各自的银行流水明细作为依据
+        j_details = [f"{row['银行名称']}(D:{row['Deposit_存入']},W:{row['Withdrawal_支出']})" for _, row in edited_banks.iterrows() if row['所有人'] == 'Jacob' and str(row['银行名称']).strip()]
+        a_details = [f"{row['银行名称']}(D:{row['Deposit_存入']},W:{row['Withdrawal_支出']})" for _, row in edited_banks.iterrows() if row['所有人'] == 'Amanda' and str(row['银行名称']).strip()]
         
-        # 2. 个人账本：存入薪资
+        # 1. 个人账本更新 (存入与扣除)
         if j_to_personal > 0: update_balance('Jacob', j_to_personal, '收入', f'{audit_month.strftime("%Y-%m")} 薪资存入')
         if a_to_personal > 0: update_balance('Amanda', a_to_personal, '收入', f'{audit_month.strftime("%Y-%m")} 薪资存入')
         
-        # 3. 个人账本：扣除特殊开销
-        for index, row in edited_personal.iterrows():
+        for _, row in edited_personal.iterrows():
             if row['金额'] > 0 and str(row['事由']).strip() != "":
                 update_balance(row['支出人'], -row['金额'], '支出', f"{audit_month.strftime('%Y-%m')} 个人开销: {row['事由']}")
         
-        # 4. 猪宝基金：存入与扣除
-        total_zhubao_in = (j_income - j_to_personal) + (a_income - a_to_personal)
-        if total_zhubao_in > 0: update_balance('猪宝成长基金', total_zhubao_in, '收入', f'{audit_month.strftime("%Y-%m")} 薪资划入')
-        if final_zhubao_expense != 0: update_balance('猪宝成长基金', -final_zhubao_expense, '支出', expense_desc)
+        # 2. 猪宝基金更新 (按代持人分别存入与扣除)
+        j_to_zhubao = j_income - j_to_personal
+        a_to_zhubao = a_income - a_to_personal
         
-        st.success("🎉 本月审计结算完成！所有账本已同步更新并归档。")
+        if j_to_zhubao > 0: update_balance('猪宝成长基金(Jacob代持)', j_to_zhubao, '收入', f'{audit_month.strftime("%Y-%m")} 薪资划入')
+        if a_to_zhubao > 0: update_balance('猪宝成长基金(Amanda代持)', a_to_zhubao, '收入', f'{audit_month.strftime("%Y-%m")} 薪资划入')
+        
+        if j_zhubao_expense != 0: update_balance('猪宝成长基金(Jacob代持)', -j_zhubao_expense, '支出', f"{audit_month.strftime('%Y-%m')}日常开销 [{'|'.join(j_details)}]")
+        if a_zhubao_expense != 0: update_balance('猪宝成长基金(Amanda代持)', -a_zhubao_expense, '支出', f"{audit_month.strftime('%Y-%m')}日常开销 [{'|'.join(a_details)}]")
+        
+        st.success("🎉 本月审计结算完成！双轨账本已同步更新并归档。")
         st.rerun()
 
 # ================= 模块 4: 强制平账 =================
 elif menu == "🛠️ 强制平账/修正":
     st.title("🛠️ 强制修改余额")
-    acc_to_fix = st.selectbox("选择要修改的账本", ["Jacob", "Amanda", "猪宝成长基金"])
-    current_b = balances[acc_to_fix]
+    st.info("💡 提示：用于校准你们各自银行卡的真实余额。")
+    acc_to_fix = st.selectbox("选择要修改的账本", ["Jacob", "Amanda", "猪宝成长基金(Jacob代持)", "猪宝成长基金(Amanda代持)"])
+    current_b = balances.get(acc_to_fix, 0.0)
     st.write(f"当前账面余额: **SGD {current_b:,.2f}**")
     new_balance = st.number_input("输入实际正确余额 (SGD)", value=float(current_b), step=100.0)
     
     if new_balance != current_b:
         diff = new_balance - current_b
-        st.info(f"系统将生成一笔 SGD {diff:,.2f} 的一次性平账记录。")
+        st.warning(f"系统将生成一笔 SGD {diff:,.2f} 的平账记录。")
         confirm = st.checkbox("我已反复核实，确认强制修改当前余额。")
         if confirm and st.button("🚨 确认执行覆盖"):
             update_balance(acc_to_fix, diff, '系统平账', '人工强制修改余额')
@@ -198,7 +220,7 @@ elif menu == "📜 历史流水查询":
     conn.close()
     
     if not df.empty:
-        filter_acc = st.multiselect("筛选账本", ["Jacob", "Amanda", "猪宝成长基金"], default=["猪宝成长基金"])
+        filter_acc = st.multiselect("筛选账本", ["Jacob", "Amanda", "猪宝成长基金(Jacob代持)", "猪宝成长基金(Amanda代持)"], default=["猪宝成长基金(Jacob代持)", "猪宝成长基金(Amanda代持)"])
         if filter_acc:
             df = df[df['account'].isin(filter_acc)]
         st.dataframe(df, use_container_width=True, hide_index=True)
