@@ -13,7 +13,7 @@ components.html(
         try {
             const link = window.parent.document.createElement('link');
             link.rel = 'apple-touch-icon';
-            link.href = 'https://em-content.zobj.net/source/apple/391/pig-nose_1f43d.png';
+            link.href = 'https://raw.githubusercontent.com/jiangpeng-li-0131/zhubao-app/main/apple-touch-icon.png';
             window.parent.document.head.appendChild(link);
         } catch (e) { }
     </script>
