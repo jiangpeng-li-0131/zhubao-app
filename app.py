@@ -162,23 +162,38 @@ elif menu == "📝 每月常规审计":
     
     j_zhubao_expense = j_raw_expense - j_special
     a_zhubao_expense = a_raw_expense - a_special
+
+    # [新增] 提前算出划入基金的钱和净变动，用于更清晰的界面展示
+    j_to_zhubao = j_income - j_to_personal
+    a_to_zhubao = a_income - a_to_personal
+    
+    j_zhubao_net = j_to_zhubao - j_zhubao_expense
+    a_zhubao_net = a_to_zhubao - a_zhubao_expense
     
     st.markdown("---")
     st.markdown("### 📊 本月结算核对预览")
     
     col_j, col_a = st.columns(2)
     with col_j:
-        st.write("👨🏻 **Jacob 的账户推算**")
-        st.write(f"推算流水花销: SGD {j_raw_expense:,.2f}")
-        st.write(f"剔除个人开销: SGD {j_special:,.2f}")
-        st.markdown(f"**从Jacob代持扣除: <br><span style='color:red; font-size:20px;'>SGD {j_zhubao_expense:,.2f}</span>**", unsafe_allow_html=True)
+        st.write("👨🏻 **Jacob 的账户变动**")
+        st.write(f"📥 存入个人账本: SGD {j_to_personal:,.2f}")
+        st.write(f"📥 划入代持基金: SGD {j_to_zhubao:,.2f}")
+        st.write(f"📤 推算基金开销: SGD {j_zhubao_expense:,.2f}")
+        
+        j_color = "#28a745" if j_zhubao_net >= 0 else "#dc3545"
+        j_sign = "+" if j_zhubao_net >= 0 else ""
+        st.markdown(f"**本月代持基金净增减: <br><span style='color:{j_color}; font-size:20px;'>{j_sign}SGD {j_zhubao_net:,.2f}</span>**", unsafe_allow_html=True)
 
     with col_a:
-        st.write("👩🏻 **Amanda 的账户推算**")
-        st.write(f"推算流水花销: SGD {a_raw_expense:,.2f}")
-        st.write(f"剔除个人开销: SGD {a_special:,.2f}")
-        st.markdown(f"**从Amanda代持扣除: <br><span style='color:red; font-size:20px;'>SGD {a_zhubao_expense:,.2f}</span>**", unsafe_allow_html=True)
-    
+        st.write("👩🏻 **Amanda 的账户变动**")
+        st.write(f"📥 存入个人账本: SGD {a_to_personal:,.2f}")
+        st.write(f"📥 划入代持基金: SGD {a_to_zhubao:,.2f}")
+        st.write(f"📤 推算基金开销: SGD {a_zhubao_expense:,.2f}")
+        
+        a_color = "#28a745" if a_zhubao_net >= 0 else "#dc3545"
+        a_sign = "+" if a_zhubao_net >= 0 else ""
+        st.markdown(f"**本月代持基金净增减: <br><span style='color:{a_color}; font-size:20px;'>{a_sign}SGD {a_zhubao_net:,.2f}</span>**", unsafe_allow_html=True)
+        
     if st.button("✅ 确认数据无误，同步至云端"):
         with st.spinner('正在同步至 Google Sheets，请稍候...'):
             j_details = [f"{row['银行名称']}(D:{row['Deposit_存入']},W:{row['Withdrawal_支出']})" for _, row in edited_banks.iterrows() if row['所有人'] == 'Jacob' and str(row['银行名称']).strip()]
