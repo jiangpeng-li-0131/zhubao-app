@@ -151,7 +151,7 @@ if menu == "📊 资产大盘看板":
         </div>
     """, unsafe_allow_html=True)
 
-    st.markdown("### 🍼 猪宝成长基金 (共同账户)")
+    st.markdown("### 🍼 猪宝成长基金")
     bg_style = "background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 100%); border-left: 6px solid #ff758c;" if total_zhu >= 0 else "background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); border-left: 6px solid #e63946;"
 
     st.markdown(f"""
@@ -195,19 +195,20 @@ elif menu == "📝 每月常规审计":
     audit_month = st.date_input("📅 设定当前审计归档月份", value=datetime.today())
     st.markdown("---")
     
-    st.markdown("#### 1. 💰 收入与个人分配 (SGD)")
+    st.markdown("#### 1. 💰 收入与个人分配")
     col1, col2 = st.columns(2)
     with col1:
-        j_income = st.number_input("Jacob 总收入", min_value=0.0, step=100.0)
-        j_to_personal = st.number_input("Jacob 截留至个人", min_value=0.0, step=100.0)
+        j_income = st.number_input("Jacob 总收入 (SGD)", min_value=0.0, step=100.0)
+        j_to_personal = st.number_input("Jacob 截留至个人 (SGD)", min_value=0.0, step=100.0)
     with col2:
-        a_income = st.number_input("Amanda 总收入", min_value=0.0, step=100.0)
-        a_to_personal = st.number_input("Amanda 截留至个人", min_value=0.0, step=100.0)
+        a_income = st.number_input("Amanda 总收入 (SGD)", min_value=0.0, step=100.0)
+        a_to_personal = st.number_input("Amanda 截留至个人 (SGD)", min_value=0.0, step=100.0)
         
-    st.markdown("<br>#### 2. 🏦 银行对账单明细录入", unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("#### 2. 🏦 银行对账单明细录入")
     if "bank_statements" not in st.session_state:
         st.session_state.bank_statements = pd.DataFrame(
-            {"所有人": ["Jacob", "Amanda"], "银行名称": ["DBS", "OCBC"], "Deposit_存入": [0.0, 0.0], "Withdrawal_支出": [0.0, 0.0]}
+            {"所有人": ["Jacob", "Jacob", "Jacob", "Jacob", "Amanda", "Amanda", "Amanda"], "银行名称": ["OCBC", "UOB", "DBS", "ICBC", "OCBC", "DBS", "BOC"], "Deposit_存入": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], "Withdrawal_支出": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]}
         )
     edited_banks = st.data_editor(
         st.session_state.bank_statements,
@@ -216,12 +217,13 @@ elif menu == "📝 每月常规审计":
         column_config={
             "所有人": st.column_config.SelectboxColumn("所有人", options=["Jacob", "Amanda"], required=True),
             "银行名称": st.column_config.TextColumn("银行名称", required=True),
-            "Deposit_存入": st.column_config.NumberColumn("Deposit (+)", min_value=0.0, format="%.2f"),
-            "Withdrawal_支出": st.column_config.NumberColumn("Withdrawal (-)", min_value=0.0, format="%.2f")
+            "Deposit_存入": st.column_config.NumberColumn("Deposit (+) (SGD)", min_value=0.0, format="%.2f"),
+            "Withdrawal_支出": st.column_config.NumberColumn("Withdrawal (-) (SGD)", min_value=0.0, format="%.2f")
         }
     )
     
-    st.markdown("<br>#### 3. ⚖️ 剔除个人特殊开销 (不走基金的钱)", unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("#### 3. ⚖️ 剔除个人特殊开销")
     if "personal_expenses" not in st.session_state:
         st.session_state.personal_expenses = pd.DataFrame(
             {"支出人": ["Jacob", "Amanda"], "金额": [0.0, 0.0], "事由": ["无", "无"]}
@@ -270,7 +272,7 @@ elif menu == "📝 每月常规审计":
         j_sign = "+" if j_zhubao_net >= 0 else ""
         st.markdown(f"""
             <div style="background-color: #ffffff; padding: 20px; border-radius: 12px; border: 1px solid #f0f2f6; box-shadow: 0 4px 10px rgba(0,0,0,0.03);">
-                <h4 style="margin-top:0; color:#2c3e50; border-bottom: 2px solid #f0f2f6; padding-bottom: 10px;">👨🏻 Jacob 资金流</h4>
+                <h4 style="margin-top:0; color:#2c3e50; border-bottom: 2px solid #f0f2f6; padding-bottom: 10px;">👨🏻 Jacob 资金流 (SGD)</h4>
                 <p style="margin:10px 0 5px 0; color:#666; font-size: 14px; display: flex; justify-content: space-between;"><span>📥 存入个人账本:</span> <b>{j_to_personal:,.2f}</b></p>
                 <p style="margin:5px 0 5px 0; color:#666; font-size: 14px; display: flex; justify-content: space-between;"><span>📥 划入代持基金:</span> <b>{j_to_zhubao:,.2f}</b></p>
                 <p style="margin:5px 0 15px 0; color:#666; font-size: 14px; display: flex; justify-content: space-between;"><span>📤 推算基金开销:</span> <b>{j_zhubao_expense:,.2f}</b></p>
@@ -286,7 +288,7 @@ elif menu == "📝 每月常规审计":
         a_sign = "+" if a_zhubao_net >= 0 else ""
         st.markdown(f"""
             <div style="background-color: #ffffff; padding: 20px; border-radius: 12px; border: 1px solid #f0f2f6; box-shadow: 0 4px 10px rgba(0,0,0,0.03);">
-                <h4 style="margin-top:0; color:#2c3e50; border-bottom: 2px solid #f0f2f6; padding-bottom: 10px;">👩🏻 Amanda 资金流</h4>
+                <h4 style="margin-top:0; color:#2c3e50; border-bottom: 2px solid #f0f2f6; padding-bottom: 10px;">👩🏻 Amanda 资金流 (SGD)</h4>
                 <p style="margin:10px 0 5px 0; color:#666; font-size: 14px; display: flex; justify-content: space-between;"><span>📥 存入个人账本:</span> <b>{a_to_personal:,.2f}</b></p>
                 <p style="margin:5px 0 5px 0; color:#666; font-size: 14px; display: flex; justify-content: space-between;"><span>📥 划入代持基金:</span> <b>{a_to_zhubao:,.2f}</b></p>
                 <p style="margin:5px 0 15px 0; color:#666; font-size: 14px; display: flex; justify-content: space-between;"><span>📤 推算基金开销:</span> <b>{a_zhubao_expense:,.2f}</b></p>
