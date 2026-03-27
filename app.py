@@ -83,7 +83,7 @@ with st.sidebar:
     st.markdown("---")
     menu = st.radio("导航菜单", ["📊 资产大盘看板", "📝 每月常规审计", "🛠️ 强制平账/修正", "📜 历史流水查询"])
 
-# ================= 模块 1: 资产看板 =================
+# ================= 模块 1: 资产大盘看板 =================
 if menu == "📊 资产大盘看板":
     
     # [美化 4] 将汇率设置做成了可折叠的小抽屉，放在看板最上方
@@ -98,6 +98,10 @@ if menu == "📊 资产大盘看板":
         if "RMB" in view_mode:
             return f"¥ {amount * exchange_rate:,.2f}"
         return f"$ {amount:,.2f}"
+
+    # [新增核心逻辑] 动态颜色函数：负数显示为醒目的红色
+    def get_color(val, default_color):
+        return "#e63946" if val < 0 else default_color
 
     # 计算总数
     j_personal = balances.get('Jacob', 0)
@@ -117,16 +121,20 @@ if menu == "📊 资产大盘看板":
     """, unsafe_allow_html=True)
 
     st.markdown("### 🍼 猪宝成长基金 (共同账户)")
+    
+    # [动态 UI] 如果基金总额为负，背景变成清冷灰+红色警告边框；正数则保持猛男粉
+    bg_style = "background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 100%); border-left: 5px solid #ff758c;" if total_zhu >= 0 else "background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); border-left: 5px solid #e63946;"
+
     st.markdown(f"""
-        <div style="background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #ff758c; margin-bottom: 20px;">
+        <div style="{bg_style} padding: 20px; border-radius: 12px; margin-bottom: 20px;">
             <div style="display: flex; justify-content: space-between; align-items: center;">
                 <div>
                     <p style="margin: 0; font-size: 14px; color: #555; font-weight: 600;">基金总余额</p>
-                    <h2 style="margin: 5px 0 0 0; color: #333;">{display_currency(total_zhu)}</h2>
+                    <h2 style="margin: 5px 0 0 0; color: {get_color(total_zhu, '#333')};">{display_currency(total_zhu)}</h2>
                 </div>
                 <div style="text-align: right;">
-                    <p style="margin: 0; font-size: 13px; color: #555;">Jacob 银行卡代持: <br><b>{display_currency(j_zhu)}</b></p>
-                    <p style="margin: 10px 0 0 0; font-size: 13px; color: #555;">Amanda 银行卡代持: <br><b>{display_currency(a_zhu)}</b></p>
+                    <p style="margin: 0; font-size: 13px; color: #555;">Jacob 银行卡代持: <br><b style="color: {get_color(j_zhu, '#555')};">{display_currency(j_zhu)}</b></p>
+                    <p style="margin: 10px 0 0 0; font-size: 13px; color: #555;">Amanda 银行卡代持: <br><b style="color: {get_color(a_zhu, '#555')};">{display_currency(a_zhu)}</b></p>
                 </div>
             </div>
         </div>
@@ -138,17 +146,17 @@ if menu == "📊 资产大盘看板":
         st.markdown(f"""
             <div style="background-color: #f8f9fa; padding: 20px; border-radius: 12px; border: 1px solid #e9ecef; text-align: center;">
                 <p style="margin: 0; font-size: 14px; color: #6c757d; font-weight: 600;">Jacob 个人账本</p>
-                <h3 style="margin: 10px 0 0 0; color: #212529;">{display_currency(j_personal)}</h3>
+                <h3 style="margin: 10px 0 0 0; color: {get_color(j_personal, '#212529')};">{display_currency(j_personal)}</h3>
             </div>
         """, unsafe_allow_html=True)
     with col2:
         st.markdown(f"""
             <div style="background-color: #f8f9fa; padding: 20px; border-radius: 12px; border: 1px solid #e9ecef; text-align: center;">
                 <p style="margin: 0; font-size: 14px; color: #6c757d; font-weight: 600;">Amanda 个人账本</p>
-                <h3 style="margin: 10px 0 0 0; color: #212529;">{display_currency(a_personal)}</h3>
+                <h3 style="margin: 10px 0 0 0; color: {get_color(a_personal, '#212529')};">{display_currency(a_personal)}</h3>
             </div>
         """, unsafe_allow_html=True)
-
+        
 # ================= 模块 2: 每月常规审计 =================
 elif menu == "📝 每月常规审计":
     st.title("📝 每月 7 号财务审计")
