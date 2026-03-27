@@ -5,7 +5,7 @@ from streamlit_gsheets import GSheetsConnection
 import streamlit.components.v1 as components
 
 # ================= 页面配置 =================
-st.set_page_config(page_title="猪宝成长记账本", layout="centered", page_icon="🐽")
+st.set_page_config(page_title="猪宝成长记账本", layout="centered", page_icon="https://raw.githubusercontent.com/jiangpeng-li-0131/zhubao-app/main/apple-touch-icon.png")
 
 components.html(
     """
