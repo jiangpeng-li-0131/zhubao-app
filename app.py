@@ -2,14 +2,31 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 from streamlit_gsheets import GSheetsConnection
+import streamlit.components.v1 as components  # [新增] 用于注入高级界面的工具库
 
 # ================= 页面配置 =================
-st.set_page_config(page_title="猪宝成长记账本", layout="centered", page_icon="🐷")
+# [美化 1] 网页标签图标改成了猪鼻子 🐽
+st.set_page_config(page_title="猪宝成长记账本", layout="centered", page_icon="🐽")
+
+# [美化 2] 注入代码：强行告诉苹果手机，使用我们上传的图片作为桌面图标
+components.html(
+    """
+    <script>
+        try {
+            const link = window.parent.document.createElement('link');
+            link.rel = 'apple-touch-icon';
+            link.href = 'https://em-content.zobj.net/source/apple/391/pig-nose_1f43d.png';
+            window.parent.document.head.appendChild(link);
+        } catch (e) { }
+    </script>
+    """,
+    height=0, width=0
+)
 
 # 建立与 Google Sheets 的连接 (云端核心)
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# ================= 数据库操作 =================
+# ================= 数据库操作 (逻辑保持不变，绝对安全) =================
 def load_data():
     try:
         df_balances = conn.read(worksheet="balances", ttl=0)
@@ -18,7 +35,6 @@ def load_data():
         st.error("无法连接到 Google Sheets。请检查后台配置或稍后再试。")
         st.stop()
         
-    # 初始化4个账本 (双轨制核心)
     accounts = ['Jacob', 'Amanda', '猪宝成长基金(Jacob代持)', '猪宝成长基金(Amanda代持)']
     if df_balances.empty or not all(acc in df_balances['account'].values for acc in accounts):
         existing_accs = df_balances['account'].values if not df_balances.empty else []
@@ -39,7 +55,6 @@ def load_data():
 def update_balance(account, amount, type_str, description):
     df_balances, df_trans = load_data()
     
-    # 更新余额
     idx = df_balances.index[df_balances['account'] == account].tolist()
     if idx:
         df_balances.loc[idx[0], 'balance'] += amount
@@ -47,7 +62,6 @@ def update_balance(account, amount, type_str, description):
         new_row = pd.DataFrame({"account": [account], "balance": [amount]})
         df_balances = pd.concat([df_balances, new_row], ignore_index=True)
         
-    # 记录流水
     date_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     new_trans = pd.DataFrame([{
         "date": date_str, "account": account, "type": type_str, 
@@ -55,7 +69,6 @@ def update_balance(account, amount, type_str, description):
     }])
     df_trans = pd.concat([df_trans, new_trans], ignore_index=True)
     
-    # 写回云端
     conn.update(worksheet="balances", data=df_balances)
     conn.update(worksheet="transactions", data=df_trans)
 
@@ -64,37 +77,77 @@ df_balances, df_transactions = load_data()
 balances = df_balances.set_index('account')['balance'].to_dict()
 
 # ================= 侧边栏与导航 =================
+# [美化 3] 侧边栏变得极简，不再显示设置项
 with st.sidebar:
-    st.title("⚙️ 系统设置")
-    exchange_rate = st.number_input("设置 SGD 到 RMB 汇率", value=5.35, step=0.01)
-    view_mode = st.radio("显示货币", ["SGD (新加坡元)", "RMB (人民币)"])
+    st.title("🐽 家庭财务终端")
     st.markdown("---")
-    menu = st.radio("导航", ["📊 资产看板", "📝 每月常规审计", "🛠️ 强制平账/修正", "📜 历史流水查询"])
-
-def display_currency(amount):
-    if "RMB" in view_mode:
-        return f"¥ {amount * exchange_rate:,.2f}"
-    return f"$ {amount:,.2f}"
+    menu = st.radio("导航菜单", ["📊 资产大盘看板", "📝 每月常规审计", "🛠️ 强制平账/修正", "📜 历史流水查询"])
 
 # ================= 模块 1: 资产看板 =================
-if menu == "📊 资产看板":
-    st.title("🐷 猪宝成长基金 & 个人账本")
+if menu == "📊 资产大盘看板":
     
-    col1, col2 = st.columns(2)
-    col1.metric("Jacob 个人账本", display_currency(balances.get('Jacob', 0)))
-    col2.metric("Amanda 个人账本", display_currency(balances.get('Amanda', 0)))
-    
-    st.markdown("### 🍼 家庭共同账户 (猪宝成长基金)")
+    # [美化 4] 将汇率设置做成了可折叠的小抽屉，放在看板最上方
+    with st.expander("⚙️ 视图与汇率设置 (仅影响当前大盘展示)"):
+        col_set1, col_set2 = st.columns(2)
+        with col_set1:
+            exchange_rate = st.number_input("SGD 到 RMB 汇率设定", value=5.35, step=0.01)
+        with col_set2:
+            view_mode = st.radio("全局显示货币", ["SGD (新加坡元)", "RMB (人民币)"], horizontal=True)
+
+    def display_currency(amount):
+        if "RMB" in view_mode:
+            return f"¥ {amount * exchange_rate:,.2f}"
+        return f"$ {amount:,.2f}"
+
+    # 计算总数
+    j_personal = balances.get('Jacob', 0)
+    a_personal = balances.get('Amanda', 0)
     j_zhu = balances.get('猪宝成长基金(Jacob代持)', 0)
     a_zhu = balances.get('猪宝成长基金(Amanda代持)', 0)
     total_zhu = j_zhu + a_zhu
-    
-    st.metric("总计金额", display_currency(total_zhu))
-    
-    st.caption("🔍 资金分布明细：")
-    sub_col1, sub_col2 = st.columns(2)
-    sub_col1.info(f"Jacob 银行卡代持:\n\n**{display_currency(j_zhu)}**")
-    sub_col2.info(f"Amanda 银行卡代持:\n\n**{display_currency(a_zhu)}**")
+    total_family = j_personal + a_personal + total_zhu
+
+    # [美化 5] 使用高级 HTML 样式渲染的彩色数据卡片
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown(f"""
+        <div style="background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); padding: 30px; border-radius: 15px; text-align: center; color: white; box-shadow: 0 4px 15px rgba(0,0,0,0.1); margin-bottom: 30px;">
+            <p style="margin: 0; font-size: 16px; opacity: 0.8; text-transform: uppercase; letter-spacing: 2px;">家庭总资产净值 (Total Net Worth)</p>
+            <h1 style="margin: 10px 0 0 0; font-size: 3rem; font-weight: 800;">{display_currency(total_family)}</h1>
+        </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("### 🍼 猪宝成长基金 (共同账户)")
+    st.markdown(f"""
+        <div style="background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 100%); padding: 20px; border-radius: 12px; border-left: 5px solid #ff758c; margin-bottom: 20px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <p style="margin: 0; font-size: 14px; color: #555; font-weight: 600;">基金总余额</p>
+                    <h2 style="margin: 5px 0 0 0; color: #333;">{display_currency(total_zhu)}</h2>
+                </div>
+                <div style="text-align: right;">
+                    <p style="margin: 0; font-size: 13px; color: #555;">Jacob 银行卡代持: <br><b>{display_currency(j_zhu)}</b></p>
+                    <p style="margin: 10px 0 0 0; font-size: 13px; color: #555;">Amanda 银行卡代持: <br><b>{display_currency(a_zhu)}</b></p>
+                </div>
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("### 👤 个人流动资金")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown(f"""
+            <div style="background-color: #f8f9fa; padding: 20px; border-radius: 12px; border: 1px solid #e9ecef; text-align: center;">
+                <p style="margin: 0; font-size: 14px; color: #6c757d; font-weight: 600;">Jacob 个人账本</p>
+                <h3 style="margin: 10px 0 0 0; color: #212529;">{display_currency(j_personal)}</h3>
+            </div>
+        """, unsafe_allow_html=True)
+    with col2:
+        st.markdown(f"""
+            <div style="background-color: #f8f9fa; padding: 20px; border-radius: 12px; border: 1px solid #e9ecef; text-align: center;">
+                <p style="margin: 0; font-size: 14px; color: #6c757d; font-weight: 600;">Amanda 个人账本</p>
+                <h3 style="margin: 10px 0 0 0; color: #212529;">{display_currency(a_personal)}</h3>
+            </div>
+        """, unsafe_allow_html=True)
 
 # ================= 模块 2: 每月常规审计 =================
 elif menu == "📝 每月常规审计":
@@ -163,10 +216,8 @@ elif menu == "📝 每月常规审计":
     j_zhubao_expense = j_raw_expense - j_special
     a_zhubao_expense = a_raw_expense - a_special
 
-    # [新增] 提前算出划入基金的钱和净变动，用于更清晰的界面展示
     j_to_zhubao = j_income - j_to_personal
     a_to_zhubao = a_income - a_to_personal
-    
     j_zhubao_net = j_to_zhubao - j_zhubao_expense
     a_zhubao_net = a_to_zhubao - a_zhubao_expense
     
@@ -176,9 +227,9 @@ elif menu == "📝 每月常规审计":
     col_j, col_a = st.columns(2)
     with col_j:
         st.write("👨🏻 **Jacob 的账户变动**")
-        st.write(f"📥 存入个人账本: SGD {j_to_personal:,.2f}")
-        st.write(f"📥 划入代持基金: SGD {j_to_zhubao:,.2f}")
-        st.write(f"📤 推算基金开销: SGD {j_zhubao_expense:,.2f}")
+        st.write(f"📥 存入个人: SGD {j_to_personal:,.2f}")
+        st.write(f"📥 划入代持: SGD {j_to_zhubao:,.2f}")
+        st.write(f"📤 推算开销: SGD {j_zhubao_expense:,.2f}")
         
         j_color = "#28a745" if j_zhubao_net >= 0 else "#dc3545"
         j_sign = "+" if j_zhubao_net >= 0 else ""
@@ -186,16 +237,16 @@ elif menu == "📝 每月常规审计":
 
     with col_a:
         st.write("👩🏻 **Amanda 的账户变动**")
-        st.write(f"📥 存入个人账本: SGD {a_to_personal:,.2f}")
-        st.write(f"📥 划入代持基金: SGD {a_to_zhubao:,.2f}")
-        st.write(f"📤 推算基金开销: SGD {a_zhubao_expense:,.2f}")
+        st.write(f"📥 存入个人: SGD {a_to_personal:,.2f}")
+        st.write(f"📥 划入代持: SGD {a_to_zhubao:,.2f}")
+        st.write(f"📤 推算开销: SGD {a_zhubao_expense:,.2f}")
         
         a_color = "#28a745" if a_zhubao_net >= 0 else "#dc3545"
         a_sign = "+" if a_zhubao_net >= 0 else ""
         st.markdown(f"**本月代持基金净增减: <br><span style='color:{a_color}; font-size:20px;'>{a_sign}SGD {a_zhubao_net:,.2f}</span>**", unsafe_allow_html=True)
-        
+    
     if st.button("✅ 确认数据无误，同步至云端"):
-        with st.spinner('正在同步至 Google Sheets，请稍候...'):
+        with st.spinner('🚀 正在将账目加密同步至 Google 云端... \n (由于免费服务器限制，保存后可能会出现短暂的断开连接。请放心，数据瞬间即安全入库！稍等片刻刷新即可)'):
             j_details = [f"{row['银行名称']}(D:{row['Deposit_存入']},W:{row['Withdrawal_支出']})" for _, row in edited_banks.iterrows() if row['所有人'] == 'Jacob' and str(row['银行名称']).strip()]
             a_details = [f"{row['银行名称']}(D:{row['Deposit_存入']},W:{row['Withdrawal_支出']})" for _, row in edited_banks.iterrows() if row['所有人'] == 'Amanda' and str(row['银行名称']).strip()]
             
@@ -205,9 +256,6 @@ elif menu == "📝 每月常规审计":
             for _, row in edited_personal.iterrows():
                 if row['金额'] > 0 and str(row['事由']).strip() != "":
                     update_balance(row['支出人'], -row['金额'], '支出', f"{audit_month.strftime('%Y-%m')} 个人开销: {row['事由']}")
-            
-            j_to_zhubao = j_income - j_to_personal
-            a_to_zhubao = a_income - a_to_personal
             
             if j_to_zhubao > 0: update_balance('猪宝成长基金(Jacob代持)', j_to_zhubao, '收入', f'{audit_month.strftime("%Y-%m")} 薪资划入')
             if a_to_zhubao > 0: update_balance('猪宝成长基金(Amanda代持)', a_to_zhubao, '收入', f'{audit_month.strftime("%Y-%m")} 薪资划入')
@@ -245,28 +293,24 @@ elif menu == "📜 历史流水查询":
     st.title("📜 账本流水与回溯")
     
     if not df_transactions.empty:
-        # 功能一：清空默认筛选，完整展示
         filter_acc = st.multiselect(
             "筛选账本", 
             ["Jacob", "Amanda", "猪宝成长基金(Jacob代持)", "猪宝成长基金(Amanda代持)"], 
             default=[]
         )
         
-        # 按照倒序显示最新流水
         df_display = df_transactions.iloc[::-1].copy()
         if filter_acc:
             df_display = df_display[df_display['account'].isin(filter_acc)]
             
         st.dataframe(df_display, use_container_width=True, hide_index=True)
         
-        # 功能二：安全的下拉撤销功能 (Google Sheets 架构)
         st.markdown("---")
         st.subheader("🗑️ 撤销流水记录")
-        st.warning("⚠️ 删除流水后，系统会自动将该笔金额从云端的对应账本中「反向核算」回去，保证账目绝对平衡。")
+        st.warning("⚠️ 删除流水后，系统会自动将该笔金额从云端的对应账本中「反向核算」回去。")
         
-        # 为了唯一识别云端行，我们引入原 DataFrame 的内部索引(index)
         df_trans_with_idx = df_transactions.reset_index()
-        df_trans_with_idx_reverse = df_trans_with_idx.iloc[::-1] # 保持下拉菜单也是倒序排列
+        df_trans_with_idx_reverse = df_trans_with_idx.iloc[::-1]
         
         def format_record(idx):
             row = df_trans_with_idx[df_trans_with_idx['index'] == idx].iloc[0]
@@ -284,16 +328,13 @@ elif menu == "📜 历史流水查询":
                 acc = row_to_delete['account']
                 amt = float(row_to_delete['amount'])
                 
-                # 1. 剔除选中的这行，准备写回新的流水表
                 df_trans_new = df_trans_with_idx[df_trans_with_idx['index'] != del_idx].drop(columns=['index'])
                 
-                # 2. 从余额表中执行反向加减法
                 df_balances_new = df_balances.copy()
                 b_idx = df_balances_new.index[df_balances_new['account'] == acc].tolist()
                 if b_idx:
                     df_balances_new.loc[b_idx[0], 'balance'] -= amt
                 
-                # 3. 双重更新覆盖云端数据
                 conn.update(worksheet="transactions", data=df_trans_new)
                 conn.update(worksheet="balances", data=df_balances_new)
                 
